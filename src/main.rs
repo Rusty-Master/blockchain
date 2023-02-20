@@ -1,7 +1,15 @@
-use serde::{Deserialize, Serialize};
+#![allow(unused)] //silence unused warnings while exploring
 
-use std::fs::File;
+use secp256k1::{
+    rand::{rngs::StdRng, SeedableRng},
+    PublicKey, SecretKey,
+};
+use serde::{Deserialize, Serialize};
 use std::io::prelude::*;
+use std::{
+    fs::{self, File},
+    vec,
+};
 
 pub enum MainError {
     UpdateError,
@@ -24,6 +32,12 @@ pub struct Transaction {
     signature: Option<String>,
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct Wallet {
+    secret_key: String,
+    public_key: String,
+}
+
 fn main() {
     let genesis_block = Block {
         hash: "0".to_string(),
@@ -39,6 +53,7 @@ fn main() {
     };
 
     write_blockchain(vec![genesis_block]);
+    generate_wallets();
 }
 
 fn write_blockchain(blockchain: Vec<Block>) {
@@ -52,4 +67,39 @@ fn write_blockchain(blockchain: Vec<Block>) {
 
     let mut file = File::create("src/blockchain.json").unwrap();
     file.write_all(contents.as_bytes());
+}
+
+pub fn get_wallets() -> Vec<Wallet> {
+    let wallets_file = fs::read_to_string("src/wallets.json").unwrap();
+    let wallets: Vec<Wallet> = serde_json::from_str(&wallets_file).unwrap();
+    wallets
+}
+
+fn write_wallets(wallets: Vec<Wallet>) {
+    let result: Vec<String> = wallets
+        .iter()
+        .map(|wallet| serde_json::to_string(&wallet).unwrap())
+        .collect();
+
+    let contents = result.join("\n");
+    println!("contents: {contents}");
+
+    let mut file = File::create("src/wallets.json").unwrap();
+    file.write_all(contents.as_bytes());
+}
+
+fn generate_wallets() {
+    let secp = secp256k1::Secp256k1::new();
+    let mut rng = StdRng::seed_from_u64(111);
+    let (secret_key, public_key) = secp.generate_keypair(&mut rng);
+
+    println!("secret key: {}", secret_key.display_secret());
+    println!("public key: {public_key}");
+
+    let wallet = Wallet {
+        secret_key: secret_key.display_secret().to_string(),
+        public_key: public_key.to_string(),
+    };
+
+    write_wallets(vec![wallet]);
 }
