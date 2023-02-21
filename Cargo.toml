@@ -10,7 +10,7 @@ edition = "2021"
 serde_json = "1.0"
 serde = { version = "1.0.104", features = ["derive"] }
 # Blockchain utils
-secp256k1 = { version = "0.26.0", features = ["rand"] }
+secp256k1 = { version = "0.26.0", features = ["rand", "bitcoin_hashes"] }
 
 # Utils
 rand = "0.8.5"
