@@ -2,8 +2,8 @@
 
 use secp256k1::{
     hashes::{sha256, Hash},
-    rand::{rngs::StdRng, SeedableRng},
-    PublicKey, SecretKey,
+    rand::{rngs::OsRng, SeedableRng},
+    Message, PublicKey, SecretKey,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -41,8 +41,52 @@ pub struct Wallet {
 
 const GENESIS_ADDRESS: &str = "0000";
 const BLOCK_REWARD: i32 = 50;
+//TODO: Add this
+const MINIMUM_GAS_FEE: i32 = 1;
 
+// TODO: Move to separate files to run independently
 fn main() {
+    init();
+    generate_wallets(3);
+    mine_blocks();
+    mine_blocks();
+    mine_blocks();
+    let wallets = get_wallets();
+    let miner = wallets.get(0).unwrap();
+    let sender = wallets.get(1).unwrap();
+    let receiver = wallets.get(2).unwrap();
+    transfer(
+        SecretKey::from_str(&miner.secret_key).unwrap(),
+        100,
+        2,
+        sender.public_key.clone(),
+    );
+    transfer(
+        SecretKey::from_str(&miner.secret_key).unwrap(),
+        30,
+        2,
+        receiver.public_key.clone(),
+    );
+    mine_blocks();
+    transfer(
+        SecretKey::from_str(&sender.secret_key).unwrap(),
+        50,
+        1,
+        receiver.public_key.clone(),
+    );
+    transfer(
+        SecretKey::from_str(&receiver.secret_key).unwrap(),
+        20,
+        1,
+        sender.public_key.clone(),
+    );
+    mine_blocks();
+    println!("{}", get_address_balance(&miner.public_key));
+    println!("{}", get_address_balance(&sender.public_key));
+    println!("{}", get_address_balance(&receiver.public_key));
+}
+
+fn init() {
     let genesis_block = Block {
         hash: "0".to_string(),
         previous_hash: "0".to_string(),
@@ -57,22 +101,7 @@ fn main() {
     };
 
     write_blockchain(vec![genesis_block]);
-    generate_wallets();
-    mine_blocks();
-    mine_blocks();
-}
-
-fn write_blockchain(blockchain: Vec<Block>) {
-    let blockchain_string: String = serde_json::to_string(&blockchain).unwrap();
-    println!("blockchain_string: {blockchain_string}");
-    let mut file = File::create("src/blockchain.json").unwrap();
-    file.write_all(blockchain_string.as_bytes());
-}
-
-pub fn get_wallets() -> Vec<Wallet> {
-    let wallets_file = fs::read_to_string("src/wallets.json").unwrap();
-    let wallets: Vec<Wallet> = serde_json::from_str(&wallets_file).unwrap();
-    wallets
+    write_transactions(vec![]);
 }
 
 pub fn get_blockchain() -> Vec<Block> {
@@ -81,48 +110,62 @@ pub fn get_blockchain() -> Vec<Block> {
     blockchain
 }
 
+fn write_blockchain(blockchain: Vec<Block>) {
+    let blockchain_string: String = serde_json::to_string(&blockchain).unwrap();
+    let mut file = File::create("src/blockchain.json").unwrap();
+    file.write_all(blockchain_string.as_bytes());
+}
+pub fn get_transactions() -> Vec<Transaction> {
+    let transactions_file = fs::read_to_string("src/transactions.json").unwrap();
+    let transactions: Vec<Transaction> = serde_json::from_str(&transactions_file).unwrap();
+    transactions
+}
+
+fn write_transactions(transaction: Vec<Transaction>) {
+    let transaction_string: String = serde_json::to_string_pretty(&transaction).unwrap();
+    let mut file = File::create("src/transactions.json").unwrap();
+    file.write_all(transaction_string.as_bytes());
+}
+
+pub fn get_wallets() -> Vec<Wallet> {
+    let wallets_file = fs::read_to_string("src/wallets.json").unwrap();
+    let wallets: Vec<Wallet> = serde_json::from_str(&wallets_file).unwrap();
+    wallets
+}
+
 fn write_wallets(wallets: Vec<Wallet>) {
     let wallets_string: String = serde_json::to_string(&wallets).unwrap();
-    println!("wallets_string: {wallets_string}");
     let mut file = File::create("src/wallets.json").unwrap();
     file.write_all(wallets_string.as_bytes());
 }
 
-fn generate_wallets() {
+fn generate_wallets(amount: i32) {
+    let mut wallets: Vec<Wallet> = Vec::new();
     let secp = secp256k1::Secp256k1::new();
-    let mut rng = StdRng::seed_from_u64(111);
-    let (secret_key, public_key) = secp.generate_keypair(&mut rng);
+    for i in 0..amount {
+        let (secret_key, public_key) = secp.generate_keypair(&mut OsRng);
 
-    println!("secret key: {}", secret_key.display_secret());
-    println!("public key: {public_key}");
+        let wallet = Wallet {
+            secret_key: secret_key.display_secret().to_string(),
+            public_key: public_key.to_string(),
+        };
 
-    let wallet = Wallet {
-        secret_key: secret_key.display_secret().to_string(),
-        public_key: public_key.to_string(),
-    };
+        wallets.push(wallet)
+    }
 
-    write_wallets(vec![wallet]);
+    write_wallets(wallets);
 }
 
 fn mine_blocks() {
     let mut blockchain = get_blockchain();
-    let mut list_of_transactions: Vec<Transaction> = Vec::new();
-
+    let mut list_of_transactions: Vec<Transaction> = get_transactions();
     let miner_public_key = get_wallets().get(0).unwrap().public_key.clone();
-    println!(
-        "get_address_balance 1: {}",
-        get_address_balance("0000".to_string())
-    );
-    println!(
-        "get_address_balance 2: {}",
-        get_address_balance2("0000".to_string())
-    );
 
-    let is_supply_available = get_address_balance(GENESIS_ADDRESS.to_string()) > BLOCK_REWARD;
+    let is_supply_available = get_address_balance(&GENESIS_ADDRESS.to_string()) > BLOCK_REWARD;
 
     let reward_transaction = Transaction {
         sender_address: GENESIS_ADDRESS.to_string(),
-        receiver_address: miner_public_key,
+        receiver_address: miner_public_key.clone(),
         amount: BLOCK_REWARD,
         gas_fee: None,
         signature: None,
@@ -132,10 +175,25 @@ fn mine_blocks() {
         list_of_transactions.push(reward_transaction);
     }
 
+    let mut gas_transactions: Vec<Transaction> = list_of_transactions
+        .iter()
+        .filter(|t| t.gas_fee.is_some())
+        .map(|t| Transaction {
+            sender_address: t.sender_address.clone(),
+            receiver_address: miner_public_key.clone(),
+            amount: t.gas_fee.unwrap(),
+            gas_fee: None,
+            signature: None,
+        })
+        .collect();
+
+    list_of_transactions.append(&mut gas_transactions);
+
     if let Some(block) = blockchain.last() {
         let previous_hash = block.hash.clone();
         let mut new_hash = String::new();
         let mut nonce = 0;
+
         while !new_hash.starts_with("00") {
             nonce += 1;
             let phrase = format!(
@@ -145,7 +203,6 @@ fn mine_blocks() {
                 serde_json::to_string(&list_of_transactions).unwrap()
             );
             new_hash = sha256::Hash::hash(phrase.as_bytes()).to_string();
-            println!("{new_hash}");
         }
 
         let new_block = Block {
@@ -158,44 +215,145 @@ fn mine_blocks() {
         blockchain.push(new_block);
 
         write_blockchain(blockchain);
+        write_transactions(vec![]);
     }
 }
 
-fn get_address_balance(address: String) -> i32 {
+fn get_address_balance(address: &String) -> i32 {
     let blockchain = get_blockchain();
     let mut balance = 0;
 
     for block in blockchain {
         for transaction in block.transactions {
-            if transaction.sender_address == address {
+            if transaction.sender_address == *address {
                 balance -= transaction.amount;
             }
-            if transaction.receiver_address == address {
+            if transaction.receiver_address == *address {
                 balance += transaction.amount;
             }
+        }
+    }
+
+    // checking mem pool for double spending
+    let transactions = get_transactions();
+
+    for transaction in transactions {
+        if transaction.sender_address == *address {
+            balance -= (transaction.amount + transaction.gas_fee.unwrap());
         }
     }
 
     balance
 }
 
-fn get_address_balance2(address: String) -> i32 {
-    let blockchain = get_blockchain();
-    let mut balance = 0;
+// fn get_address_balance2(address: String) -> i32 {
+//     let blockchain = get_blockchain();
+//     let mut balance = 0;
 
-    let transactions = blockchain
-        .into_iter()
-        .flat_map(|block| block.transactions)
-        .collect::<Vec<Transaction>>();
+//     let transactions = blockchain
+//         .into_iter()
+//         .flat_map(|block| block.transactions)
+//         .collect::<Vec<Transaction>>();
 
-    let result = transactions.iter().fold(0, |acc, t| {
-        if t.sender_address == address {
-            acc - t.amount
-        } else if t.receiver_address == address {
-            acc + t.amount
-        } else {
-            acc
-        }
-    });
-    result
+//     let result = transactions.iter().fold(0, |mut acc, t| {
+//         if t.sender_address == address {
+//             acc -= t.amount;
+//         }
+//         if t.receiver_address == address {
+//             acc += t.amount;
+//         }
+//         acc
+//     });
+//     result
+// }
+
+fn transfer(sender_private_key: SecretKey, amount: i32, gas_fee: i32, receiver_public_key: String) {
+    let secp = secp256k1::Secp256k1::new();
+    let sender_public_address = sender_private_key.public_key(&secp).to_string();
+    if get_address_balance(&sender_public_address) >= amount + gas_fee {
+        let message = Message::from_hashed_data::<sha256::Hash>(
+            (sender_public_address.clone() + &amount.to_string()).as_bytes(),
+        );
+        let signature = secp.sign_ecdsa(&message, &sender_private_key);
+
+        let transaction = Transaction {
+            sender_address: sender_public_address,
+            receiver_address: receiver_public_key,
+            gas_fee: Some(gas_fee),
+            amount,
+            signature: Some(signature.to_string()),
+        };
+
+        let mut current_transactions = get_transactions();
+        current_transactions.push(transaction);
+        write_transactions(current_transactions);
+    }
+}
+
+// Run consecutively using cargo test -- --test-threads=1
+// TODO: Should use separate files for tests
+// or change write and get functions to be generic and pass them a filename
+//https://docs.rs/tempdir/latest/tempdir/
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn generate_wallets_ok() {
+        //given
+        //when
+        generate_wallets(2);
+
+        //then
+        let wallets = get_wallets();
+        assert_eq!(wallets.len(), 2);
+    }
+
+    #[test]
+    fn init_ok() {
+        //given
+
+        //when
+        init();
+        //then
+        let blockchain = get_blockchain();
+        assert_eq!(blockchain.len(), 1);
+        assert_eq!(blockchain.get(0).unwrap().hash, "0".to_string());
+    }
+
+    #[test]
+    fn mine_blocks_ok() {
+        //given
+        //when
+        init();
+        mine_blocks();
+
+        //then
+        let blockchain = get_blockchain();
+        assert_eq!(blockchain.len(), 2);
+    }
+
+    #[test]
+    fn transfer_ok() {
+        //given
+        generate_wallets(2);
+        let wallets = get_wallets();
+        let sender = wallets.get(0).unwrap();
+        let receiver = wallets.get(1).unwrap();
+
+        //when
+        init();
+        mine_blocks();
+        transfer(
+            SecretKey::from_str(&sender.secret_key).unwrap(),
+            40,
+            1,
+            receiver.public_key.clone(),
+        );
+        mine_blocks();
+
+        //then
+        assert_eq!(get_address_balance(&sender.public_key), 60);
+        assert_eq!(get_address_balance(&receiver.public_key), 40);
+    }
 }
